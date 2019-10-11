@@ -64,7 +64,7 @@ UPDATE MyTable
   WHERE columnName = 'Something Else';
 ```
 
-Reference for the full details: (Link)[https://docs.datastax.com/en/dse/5.1/cql/cql/cql_reference/cql_commands/cqlCommandsTOC.html]
+Reference for the full details: [Link](https://docs.datastax.com/en/dse/5.1/cql/cql/cql_reference/cql_commands/cqlCommandsTOC.html)
 
 ### Practice - Create
 
@@ -78,8 +78,13 @@ insert into ks1.user_tracking(user_id, action_category, action_id,  action_detai
 
 ### Practice - Query
 
+Run this query, you should see error because action_category is not declared as the partition key
 ```
 select * from user_tracking where action_category='auth';
+```
+
+With **Allow Filtering** enabled, Cassandra will do the query for you, but the performance is expected to be slow.
+```
 select * from user_tracking where action_category='auth' allow filtering;
 ```
 
@@ -151,8 +156,8 @@ Design the table to store invoice information:
 - customer
 
 Requirement
-- Generate random data: [generatedata.com](generatedata.com)
-- Run the query to get all one invoice id
+- Generate random data to inject into your table: [generatedata.com](generatedata.com)
+- Run the query to get one invoice using its id
 - Run the query to update the amount of one specific invoice id
 - Run the query to delete one specific invoice_id
 - How to query all the invoice by customer?
@@ -165,8 +170,11 @@ For each column family, don’t think of a relational table. Instead, think of a
 
 Behind the scene, Cassandra used a file format named SSTable (Sorted String Table) which was developed by Google.
 
+Memtables and SSTables are maintained per table. The commit log is shared among tables. SSTables are immutable, not written to again after the memtable is flushed. Consequently, a partition is typically stored across multiple SSTable files. A number of other SSTable structures exist to assist read operations:
 
 ### Practice - Create and Select
+
+Start to generate new keyspaces and tables and observe how the file structure are changes
 
 ```
 CREATE KEYSPACE ks2 WITH replication={'class':'SimpleStrategy','replication_factor':1};
@@ -188,7 +196,7 @@ Run the following command to see the folder structure after running the table an
 ```
 nodetool flush
 nodetool compact
-sstabledump
+sstabledump <database file>
 ```
 
 ### Practice - Insert and Overwrite data
@@ -221,24 +229,28 @@ select * from user_tracking where action_id='a3'
 ```
 
 Now, try to create index and run the command again
+
 ```
 create index on user_tracking (action_id);
 select * from user_tracking where action_id='a3'
 ```
 
-Notes about secondary index
-- Every index is stored as it own "hidden" CF
-- Nodes index the row they store
-- When you issue a query, it gets sent to all nodes
-- Currently does equality operations
+***Notes***: These indexes are stored locally on each node in a hidden table and built in a background process. If a secondary index is used in a query that is not restricted to a particular partition key, the query will have prohibitive read latency because all nodes will be queried. 
 
 More details: [Slide](https://www.slideshare.net/edanuff/indexing-in-cassandra)
+
+Reference: [Link](https://docs.datastax.com/en/archived/cassandra/3.0/cassandra/dml/dmlIndexInternals.html)
 
 ## Data Replication
 
 ### Cassandra ring architecture
-![](/Cassandra-Ring.jpg)
-At start up each node is assigned a token range which determines its position in the cluster and the rage of data stored by the node. Each node receives a proportionate range of the token ranges to ensure that data is spread evenly across the ring. The figure above illustrates dividing a 0 to 255 token range evenly amongst a four node cluster. Each node is assigned a token and is responsible for token values from the previous token (exclusive) to the node's token (inclusive). Each node in a Cassandra cluster is responsible for a certain set of data which is determined by the partitioner. A partitioner is a hash function for computing the resultant token for a particular row key. This token is then used to determine the node which will store the first replica. 
+![](./Cassandra-Ring.jpg)
+
+At start up each node is assigned a token range which determines its position in the cluster and the rage of data stored by the node. Each node receives a proportionate range of the token ranges to ensure that data is spread evenly across the ring. 
+
+The figure above illustrates dividing a 0 to 255 token range evenly amongst a four node cluster. Each node is assigned a token and is responsible for token values from the previous token (exclusive) to the node's token (inclusive). 
+
+Each node in a Cassandra cluster is responsible for a certain set of data which is determined by the partitioner. A partitioner is a hash function for computing the resultant token for a particular row key. This token is then used to determine the node which will store the first replica. 
 
 ### Partition key
 The purpose of partition key is to identify the partition or node in the cluster which stores that row. When data is read or write from the cluster a function called Partitioner is used to compute the hash value of the partition key. This hash value is used to determine the node/partition which contains that row. For example rows whose partition key values range from 1000 to 1234 may reside in node A and rows with partition key values range from 1235 to 2000 may reside in node B as shown in figure 1. If a row contains partition key whose hash value is 1233 then it will be stored in node A.
@@ -261,12 +273,39 @@ Two replication strategies are available:
 ### Turnable Consistency
 Cassandra is **eventual consistency**
 
-**Write levels**
-Level	Description	Usage
+#### **Write levels**
 
-**Read levels**
+| Level  | Description | Usage |
+|---|---|---|
+| ALL  |  A write must be written to the commit log and memory table on all replica nodes in the cluster for that row. |  Provides the highest consistency and the lowest availability of any other level. |
+| ONE	| A write must be written to the commit log and memory table of at least one replica node.	| Satisfies the needs of most users because consistency requirements are not stringent. The replica node closest to the coordinator node that received the request serves the request| 
+| QUORUM| 	A write must be written to the commit log and memtable on a quorum of replica nodes across all datacenters.	| Used in either single or multiple datacenter clusters to maintain strong consistency across the cluster. Use if you can tolerate some level of failure.| 
+| ANY  | A write must be written to at least one node. If all replica nodes for the given row key are down, the write can still succeed after a hinted handoff has been written. If all replica nodes are down at write time, an ANY write is not readable until the replica nodes for that row have recovered.  | Provides low latency and a guarantee that a write never fails. Delivers the lowest consistency and highest availability compared to other levels.  |
+
+
+#### **Read levels**
+| Level  | Description | Usage |
+|---|---|---|
+| ALL	| Returns the record with the most recent timestamp after all replicas have responded. The read operation will fail if a replica does not respond.	| Provides the highest consistency of all levels and the lowest availability of all levels.| 
+| ONE	| Returns a response from the closest replica, as determined by the snitch. By default, a read repair runs in the background to make the other replicas consistent.	|Provides the highest availability of all the levels if you can tolerate a comparatively high probability of stale data being read. The replicas contacted for reads may not always have the most recent write.| 
+| TWO	| Returns the most recent data from two of the closest replicas.	| Similar to ONE.| 
+| THREE	| Returns the most recent data from three of the closest replicas.	| Similar to TWO.| 
+| QUORUM	| Returns the record with the most recent timestamp after a quorum of replicas has responded regardless of data center.	| Ensures strong consistency if you can tolerate some level of failure.| 
 
 #### About QUORUM Level
+The QUORUM level writes to the number of nodes that make up a quorum. A quorum is calculated, and then rounded down to a whole number, as follows:
+
+`(sum_of_replication_factors / 2) + 1`
+
+The sum of all the replication_factor settings for each data center is the sum_of_replication_factors.
+
+For example, in a single data center cluster using a replication factor of 3, a quorum is 2 nodes―the cluster can tolerate 1 replica nodes down. Using a replication factor of 6, a quorum is 4―the cluster can tolerate 2 replica nodes down. In a two data center cluster where each data center has a replication factor of 3, a quorum is 4 nodes―the cluster can tolerate 2 replica nodes down. In a five data center cluster where each data center has a replication factor of 3, a quorum is 8 nodes.
+
+If consistency is top priority, you can ensure that a read always reflects the most recent write by using the following formula:
+
+`(nodes_written + nodes_read) > replication_factor`
+
+For example, if your application is using the QUORUM consistency level for both write and read operations and you are using a replication factor of 3, then this ensures that 2 nodes are always written and 2 nodes are always read. The combination of nodes written and read (4) being greater than the replication factor (3) ensures strong read consistency.
 
 ## Read and write flow
 
@@ -278,7 +317,7 @@ Level	Description	Usage
 - Based on the partition key and the replication strategy used the coordinator forwards the mutation to all applicable nodes.
 
 ### Write operation a the nodes level
-![](http://abiasforaction.net/wp-content/uploads/2015/01/Cassandra-Write-Path.jpg)
+![](./Cassandra-Write-Path.jpg)
 
 Each node processes the request individually. Every node first writes the mutation to the commit log and then writes the mutation to the memtable. Writing to the commit log ensures durability of the write as the memtable is an in-memory structure and is only written to disk when the memtable is flushed to disk. 
 
@@ -291,15 +330,16 @@ A memtable is flushed to an immutable structure called and SSTable (Sorted Strin
 
 Every SSTable creates three files on disk which include a bloom filter, a key index and a data file. Over a period of time a number of SSTables are created. This results in the need to read multiple SSTables to satisfy a read request. 
 
-Compaction is the process of combining SSTables so that related data can be found in a single SSTable. This helps with making reads much faster.
+**Compaction** is the process of combining SSTables so that related data can be found in a single SSTable. This helps with making reads much faster.
 
 ### Node level read operation
-![](http://abiasforaction.net/wp-content/uploads/2015/01/Cassandra-Read-Path-Overview.jpg)
+![](./Cassandra-Read-Path-Overview.jpg)
+
 The illustration above outlines key steps when reading data on a particular node. Every Column Family stores data in a number of SSTables. Thus Data for a particular row can be located in a number of SSTables and the memtable. Thus for every read request Cassandra needs to read data from all applicable SSTables ( all SSTables for a column family) and scan the memtable for applicable data fragments. This data is then merged and returned to the coordinator.
 
 ### SSTable read path
 
-![](http://abiasforaction.net/wp-content/uploads/2015/01/Cassandra-Read-Path.jpg)
+![](./Cassandra-Read-Path.jpg)
 
 Every SSTable has an associated bloom filter which enables it to quickly ascertain if data for the requested row key exists on the corresponding SSTable. This reduces IO when performing an row key lookup. 
 
@@ -331,6 +371,13 @@ One read operation hits the row cache, returning the requested row without a dis
 
 ## Summary
 
+### Ideal use cases for Cassandra
+- Writes exceed reads by a large margin.
+- Data is rarely updated and when updates are made they are idempotent.
+- Read Access is by a known primary key.
+- Data can be partitioned via a key that allows the database to be spread evenly across multiple nodes.
+- There is no need for joins or aggregates.
+
 ### Wrong use cases for Cassandra
 - Tables have multiple access paths. Example: lots of secondary indexes.
 - The application depends on identifying rows with sequential values. MySQL autoincrement or Oracle sequences.
@@ -340,18 +387,11 @@ One read operation hits the row cache, returning the requested row without a dis
 - Updates: Cassandra is very good at writes, okay with reads. Updates and deletes are implemented as special cases of writes and that has consequences that are not immediately obvious.
 - Transactions: CQL has no begin/commit transaction syntax. If you think you need it then Cassandra is a poor choice for you. Don’t try to simulate it. The results won’t be pretty.
 
-### Ideal use cases for Cassandra
-- Writes exceed reads by a large margin.
-- Data is rarely updated and when updates are made they are idempotent.
-- Read Access is by a known primary key.
-- Data can be partitioned via a key that allows the database to be spread evenly across multiple nodes.
-- There is no need for joins or aggregates.
-
 ---
 ## References
 
-- Collection: https://links.grokking.org/tags/119/cassandra
-- https://teddyma.gitbooks.io
+- https://links.grokking.org/tags/119/cassandra
+
 
 
 
