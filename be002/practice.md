@@ -3,7 +3,7 @@
 
 ## Objectives of this session
 - Understand key concepts and core architect of Cassandra
-- Save time learning how to use Cassandra
+- Know how to use Cassandra to solve simple use cases.
 
 ## Setup Environment
 
