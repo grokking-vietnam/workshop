@@ -11,7 +11,7 @@ Download and install Docker if you haven't: `https://www.docker.com/`
 
 After that, run this command on your computer to install Cassandra docker image: 
 ```
-docker run --name demo -d cassandra:latest
+docker run --name cassandra-workshop -d cassandra:latest
 ```
 
 Open two terminal, in the first terminal, run the following command to run CQLSH inside the docker machine
