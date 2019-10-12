@@ -7,6 +7,13 @@
 
 ## Setup Environment
 
+Download and install Docker if you haven't: `https://www.docker.com/`
+
+After that, run this command on your computer to install Cassandra docker image: 
+```
+docker run --name demo -d cassandra:latest
+```
+
 Open two terminal, in the first terminal, run the following command to run CQLSH inside the docker machine
 
 ```
@@ -78,7 +85,7 @@ insert into ks1.user_tracking(user_id, action_category, action_id,  action_detai
 
 ### Practice - Query
 
-Run this query, you should see error because action_category is not declared as the partition key
+Run this query, you should see an error because action_category is not declared as the partition key
 ```
 select * from user_tracking where action_category='auth';
 ```
@@ -90,14 +97,18 @@ select * from user_tracking where action_category='auth' allow filtering;
 
 ### Practice - Insert and Overwrite data
 
+When inserting new data with the same partition key, it's overwrite the data.
+
 ```
-insert into ks1.user_tracking(user_id, action_category, action_id,  action_detail) VALUES ('user2', 'auth', 'a5', 'Logged in');
+insert into ks1.user_tracking(user_id, action_category, action_id,  action_detail) VALUES ('user2', 'auth', 'a4', 'Logged in 3');
 ```
 
 ### Practice - Update
 
+This command will cause error because you can't update the "keys" column.
+
 ```
-update ks1.user_tracking set action_id = 'a5' where user_id='user1' and action_category='auth';
+update ks1.user_tracking set action_id = 'a0' where user_id='user1' and action_category='auth';
 ```
 
 ### Practice - Delete
@@ -107,6 +118,9 @@ delete from ks1.user_tracking where user_id='user1' and action_category='auth';
 ```
 
 ### Practice - Clustering Key
+
+Clustering key are being used to sort the data returned.
+
 ```
 CREATE TABLE user_tracking_ordered (
   user_id text,
@@ -132,9 +146,13 @@ CREATE TABLE ut (
   action_id text,
   reason text,
 
-  PRIMARY KEY((user_id, action_category), action_id, reason)
+  PRIMARY KEY((user_id, action_category), action_id)
 ) WITH CLUSTERING ORDER BY (action_id DESC); 
+```
 
+After we run the following inserts, what will happen?
+
+```
 insert into ks1.ut(user_id, action_category, action_id,  reason) VALUES ('user1', 'auth', 'a5', 'Logged in');
 insert into ks1.ut(user_id, action_category, action_id,  reason) VALUES ('user2', 'auth', 'a3', 'Logged in');
 
@@ -143,8 +161,8 @@ insert into ks1.ut(user_id, action_category, action_id,  reason) VALUES
 
 insert into ks1.ut(user_id, action_category, action_id,  reason) VALUES 
 ('user2', 'auth', 'a4', 'Logged in3');
-
 ```
+
 
 ## Exercise 1 (30 mins)
 
@@ -170,7 +188,7 @@ For each column family, don’t think of a relational table. Instead, think of a
 
 Behind the scene, Cassandra used a file format named SSTable (Sorted String Table) which was developed by Google.
 
-Memtables and SSTables are maintained per table. The commit log is shared among tables. SSTables are immutable, not written to again after the memtable is flushed. Consequently, a partition is typically stored across multiple SSTable files. A number of other SSTable structures exist to assist read operations:
+SSTables are immutable, not written to again after the memtable is flushed.
 
 ### Practice - Create and Select
 
@@ -237,8 +255,6 @@ select * from user_tracking where action_id='a3'
 
 ***Notes***: These indexes are stored locally on each node in a hidden table and built in a background process. If a secondary index is used in a query that is not restricted to a particular partition key, the query will have prohibitive read latency because all nodes will be queried. 
 
-More details: [Slide](https://www.slideshare.net/edanuff/indexing-in-cassandra)
-
 Reference: [Link](https://docs.datastax.com/en/archived/cassandra/3.0/cassandra/dml/dmlIndexInternals.html)
 
 ## Data Replication
@@ -253,7 +269,7 @@ The figure above illustrates dividing a 0 to 255 token range evenly amongst a fo
 Each node in a Cassandra cluster is responsible for a certain set of data which is determined by the partitioner. A partitioner is a hash function for computing the resultant token for a particular row key. This token is then used to determine the node which will store the first replica. 
 
 ### Partition key
-The purpose of partition key is to identify the partition or node in the cluster which stores that row. When data is read or write from the cluster a function called Partitioner is used to compute the hash value of the partition key. This hash value is used to determine the node/partition which contains that row. For example rows whose partition key values range from 1000 to 1234 may reside in node A and rows with partition key values range from 1235 to 2000 may reside in node B as shown in figure 1. If a row contains partition key whose hash value is 1233 then it will be stored in node A.
+The purpose of partition key is to identify the partition or node in the cluster which stores that row. When data is read or write from the cluster a function called Partitioner is used to compute the hash value of the partition key. This hash value is used to determine the node/partition which contains that row. 
 
 Cassandra offers the following partitioners:
 - **Murmur3Partitioner (default)**: uniformly distributes data across the cluster based on MurmurHash hash values.
@@ -261,10 +277,11 @@ Cassandra offers the following partitioners:
 - **ByteOrderedPartitioner**: keeps an ordered distribution of data lexically by key bytes
 
 ### Replication Strategies
-- Cassandra stores data replicas on multiple nodes to ensure reliability and fault tolerance. 
-- The total number of replicas for a keyspace across a Cassandra cluster is referred to as the keyspace's replication factor. 
-- A replication factor of two means there are two copies of each row, where each copy is on a different node. 
-- All replicas are equally important; there is no primary or master replica.
+Cassandra stores data replicas on multiple nodes to ensure reliability and fault tolerance. The total number of replicas for a keyspace across a Cassandra cluster is referred to as the keyspace's replication factor. 
+
+A replication factor of two means there are two copies of each row, where each copy is on a different node. 
+
+All replicas are equally important; there is no primary or master replica.
 
 Two replication strategies are available:
 - **SimpleStrategy**: Use for a single data center only. If you ever intend more than one data center, use the NetworkTopologyStrategy
@@ -299,8 +316,6 @@ The QUORUM level writes to the number of nodes that make up a quorum. A quorum i
 
 The sum of all the replication_factor settings for each data center is the sum_of_replication_factors.
 
-For example, in a single data center cluster using a replication factor of 3, a quorum is 2 nodes―the cluster can tolerate 1 replica nodes down. Using a replication factor of 6, a quorum is 4―the cluster can tolerate 2 replica nodes down. In a two data center cluster where each data center has a replication factor of 3, a quorum is 4 nodes―the cluster can tolerate 2 replica nodes down. In a five data center cluster where each data center has a replication factor of 3, a quorum is 8 nodes.
-
 If consistency is top priority, you can ensure that a read always reflects the most recent write by using the following formula:
 
 `(nodes_written + nodes_read) > replication_factor`
@@ -312,11 +327,11 @@ For example, if your application is using the QUORUM consistency level for both 
 ### Cluster level interaction for a write and read operation.
 ![](https://teddyma.gitbooks.io/learncassandra/content/assets/write_access.png)
 
-- The node that a client connects to is designated as the coordinator, also illustrated in the diagram. The coordinators is responsible for satisfying the clients request.
+- The node that a client connects to is designated as the coordinator. The coordinators is responsible for satisfying the clients request.
 - The consistency level determines the number of nodes that the coordinator needs to hear from in order to notify the client of a successful mutation.
 - Based on the partition key and the replication strategy used the coordinator forwards the mutation to all applicable nodes.
 
-### Write operation a the nodes level
+### Write operation at the nodes level
 ![](./Cassandra-Write-Path.jpg)
 
 Each node processes the request individually. Every node first writes the mutation to the commit log and then writes the mutation to the memtable. Writing to the commit log ensures durability of the write as the memtable is an in-memory structure and is only written to disk when the memtable is flushed to disk. 
@@ -326,7 +341,7 @@ A memtable is flushed to disk when:
 - The number of minutes a memtable can stay in memory elapses
 - Manually flushed by a user
 
-A memtable is flushed to an immutable structure called and SSTable (Sorted String Table). The commit log is used for playback purposes in case data from the memtable is lost due to node failure. 
+A memtable is flushed to an immutable structure called SSTable (Sorted String Table). The commit log is used for playback purposes in case data from the memtable is lost due to node failure. 
 
 Every SSTable creates three files on disk which include a bloom filter, a key index and a data file. Over a period of time a number of SSTables are created. This results in the need to read multiple SSTables to satisfy a read request. 
 
@@ -335,19 +350,25 @@ Every SSTable creates three files on disk which include a bloom filter, a key in
 ### Node level read operation
 ![](./Cassandra-Read-Path-Overview.jpg)
 
-The illustration above outlines key steps when reading data on a particular node. Every Column Family stores data in a number of SSTables. Thus Data for a particular row can be located in a number of SSTables and the memtable. Thus for every read request Cassandra needs to read data from all applicable SSTables ( all SSTables for a column family) and scan the memtable for applicable data fragments. This data is then merged and returned to the coordinator.
+Every Column Family stores data in a number of SSTables. Thus Data for a particular row can be located in a number of SSTables and the memtable. Thus for every read request Cassandra needs to read data from all applicable SSTables ( all SSTables for a column family) and scan the memtable for applicable data fragments. This data is then merged and returned to the coordinator.
 
 ### SSTable read path
 
-![](./Cassandra-Read-Path.jpg)
+
+![](https://docs.datastax.com/en/archived/cassandra/3.0/cassandra/images/dml_caching-reads_12.png)
 
 Every SSTable has an associated bloom filter which enables it to quickly ascertain if data for the requested row key exists on the corresponding SSTable. This reduces IO when performing an row key lookup. 
 
 A bloom filter is always held in memory since the whole purpose is to save disk IO. Cassandra also keeps a copy of the bloom filter on disk which enables it to recreate the bloom filter in memory quickly .  
 
-Cassandra does not store the bloom filter Java Heap instead makes a separate allocation for it in memory.  If the bloom filter returns a negative response no data is returned from the particular SSTable. 
+## Data Caching
 
-This is  a common case as the compaction operation tries to group all row key related data into as few SSTables as possible. If the bloom filter provides a positive response the partition key cache is scanned to ascertain the compression offset for the requested row key. It then proceeds to fetch the compressed data on disk and returns the result set. If the partition cache does not contain a corresponding entry the partition key summary is scanned. The partition summary is a subset to the partition index and helps determine the approximate location of the index entry in the partition index. The partition index is then scanned to locate the compression offset which is then used to find the appropriate data on disk.
+There are two layers of cache:
+- Partition key cache
+- Row cache
+
+![](https://teddyma.gitbooks.io/learncassandra/content/assets/how_cache_works.png)
+One read operation hits the row cache, returning the requested row without a disk seek. The other read operation requests a row that is not present in the row cache but is present in the partition key cache. After accessing the row in the SSTable, the system returns the data and populates the row cache with this read operation.
 
 ## Lightweight Transactions
 While durable transactions with eventual/tunable consistency is quite satisfactory for many use cases, situations do arise where more is needed. Lightweight transactions, also known as compare and set, that use linearizable consistency can probably fulfill those needs.
@@ -359,15 +380,6 @@ INSERT INTO customer_account (customerID, customer_email)
     VALUES (‘LauraS’, ‘lauras@gmail.com’)
     IF NOT EXISTS;
 ```
-
-## Data Caching
-
-There are two layers of cache:
-- Partition key cache
-- Row cache
-
-![](https://teddyma.gitbooks.io/learncassandra/content/assets/how_cache_works.png)
-One read operation hits the row cache, returning the requested row without a disk seek. The other read operation requests a row that is not present in the row cache but is present in the partition key cache. After accessing the row in the SSTable, the system returns the data and populates the row cache with this read operation.
 
 ## Summary
 
@@ -385,7 +397,7 @@ One read operation hits the row cache, returning the requested row without a dis
 - Joins: You many be able to data model yourself out of this one, but take care.
 - Locks: Honestly, Cassandra does not support locking. There is a good reason for this. Don’t try to implement them yourself. I have seen the end result of people trying to do locks using Cassandra and the results were not pretty.
 - Updates: Cassandra is very good at writes, okay with reads. Updates and deletes are implemented as special cases of writes and that has consequences that are not immediately obvious.
-- Transactions: CQL has no begin/commit transaction syntax. If you think you need it then Cassandra is a poor choice for you. Don’t try to simulate it. The results won’t be pretty.
+- Transactions: CQL has no begin/commit transaction syntax. If you think you need it then Cassandra is a poor choice for you. 
 
 ---
 ## References
